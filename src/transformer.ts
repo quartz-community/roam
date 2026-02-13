@@ -1,103 +1,216 @@
-import type { PluggableList, Plugin } from "unified";
-import type { Root as MdastRoot } from "mdast";
-import type { Root as HastRoot, Element } from "hast";
-import type { VFile } from "vfile";
-import remarkGfm from "remark-gfm";
-import rehypeSlug from "rehype-slug";
-import { findAndReplace } from "mdast-util-find-and-replace";
+import type { QuartzTransformerPlugin } from "@quartz-community/types";
+import type { PluggableList } from "unified";
 import { visit } from "unist-util-visit";
-import type { QuartzTransformerPlugin, BuildCtx } from "@quartz-community/types";
-import type { ExampleTransformerOptions } from "./types";
+import type { ReplaceFunction } from "mdast-util-find-and-replace";
+import { findAndReplace as mdastFindReplace } from "mdast-util-find-and-replace";
+import type { Root, Html, Paragraph, Text, Link, Parent } from "mdast";
+import type { BuildVisitor } from "unist-util-visit";
 
-const defaultOptions: ExampleTransformerOptions = {
-  highlightToken: "==",
-  headingClass: "example-plugin-heading",
-  enableGfm: true,
-  addHeadingSlugs: true,
+export interface RoamOptions {
+  orComponent: boolean;
+  TODOComponent: boolean;
+  DONEComponent: boolean;
+  videoComponent: boolean;
+  audioComponent: boolean;
+  pdfComponent: boolean;
+  blockquoteComponent: boolean;
+  tableComponent: boolean;
+  attributeComponent: boolean;
+}
+
+const defaultOptions: RoamOptions = {
+  orComponent: true,
+  TODOComponent: true,
+  DONEComponent: true,
+  videoComponent: true,
+  audioComponent: true,
+  pdfComponent: true,
+  blockquoteComponent: true,
+  tableComponent: true,
+  attributeComponent: true,
 };
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const orRegex = new RegExp(/{{or:(.*?)}}/, "g");
+const TODORegex = new RegExp(/{{.*?\bTODO\b.*?}}/, "g");
+const DONERegex = new RegExp(/{{.*?\bDONE\b.*?}}/, "g");
 
-const remarkHighlightToken = (token: string): Plugin<[], MdastRoot> => {
-  const escapedToken = escapeRegExp(token);
-  const pattern = new RegExp(`${escapedToken}([^\n]+?)${escapedToken}`, "g");
-  return () => (tree: MdastRoot, _file: VFile) => {
-    findAndReplace(tree, [
-      [
-        pattern,
-        (_match: string, value: string) => ({
-          type: "strong",
-          children: [{ type: "text", value }],
-        }),
-      ],
-    ]);
-  };
-};
+const blockquoteRegex = new RegExp(/(\[\[>\]\])\s*(.*)/, "g");
+const roamHighlightRegex = new RegExp(/\^\^(.+)\^\^/, "g");
+const roamItalicRegex = new RegExp(/__(.+)__/, "g");
 
-const rehypeHeadingClass = (className: string): Plugin<[], HastRoot> => {
-  return () => (tree: HastRoot, _file: VFile) => {
-    visit(tree, "element", (node: Element) => {
-      if (!/^h[1-6]$/.test(node.tagName)) {
-        return;
+function isSpecialEmbed(node: Paragraph): boolean {
+  if (node.children.length !== 2) return false;
+
+  const [textNode, linkNode] = node.children;
+  return !!(
+    textNode &&
+    textNode.type === "text" &&
+    textNode.value.startsWith("{{[[") &&
+    linkNode &&
+    linkNode.type === "link" &&
+    linkNode.children &&
+    linkNode.children[0] &&
+    linkNode.children[0].type === "text" &&
+    linkNode.children[0].value.endsWith("}}")
+  );
+}
+
+function transformSpecialEmbed(node: Paragraph, opts: RoamOptions): Html | null {
+  const [textNode, linkNode] = node.children as [Text, Link];
+  const embedType = textNode.value.match(/\{\{\[\[(.*?)\]\]:/)?.[1]?.toLowerCase();
+  const url = linkNode.url.slice(0, -2); // Remove the trailing '}}'
+
+  switch (embedType) {
+    case "audio":
+      return opts.audioComponent
+        ? {
+            type: "html",
+            value: `<audio controls>
+          <source src="${url}" type="audio/mpeg">
+          <source src="${url}" type="audio/ogg">
+          Your browser does not support the audio tag.
+        </audio>`,
+          }
+        : null;
+    case "video":
+      if (!opts.videoComponent) return null;
+      // Check if it's a YouTube video
+      const youtubeMatch = url.match(
+        /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\/(?:watch\?v=)?(.+)/,
+      );
+      if (youtubeMatch && youtubeMatch[1]) {
+        const videoId = youtubeMatch[1].split("&")[0]; // Remove additional parameters
+        const playlistMatch = url.match(/[?&]list=([^#\&\?]*)/);
+        const playlistId = playlistMatch ? playlistMatch[1] : null;
+
+        return {
+          type: "html",
+          value: `<iframe 
+            class="external-embed youtube"
+            width="600px"
+            height="350px"
+            src="https://www.youtube.com/embed/${videoId}${playlistId ? `?list=${playlistId}` : ""}"
+            frameborder="0"
+            allow="fullscreen"
+          ></iframe>`,
+        };
+      } else {
+        return {
+          type: "html",
+          value: `<video controls>
+            <source src="${url}" type="video/mp4">
+            <source src="${url}" type="video/webm">
+            Your browser does not support the video tag.
+          </video>`,
+        };
       }
+    case "pdf":
+      return opts.pdfComponent
+        ? {
+            type: "html",
+            value: `<embed src="${url}" type="application/pdf" width="100%" height="600px" />`,
+          }
+        : null;
+    default:
+      return null;
+  }
+}
 
-      const existing = node.properties?.className;
-      const classes: string[] = Array.isArray(existing)
-        ? existing.filter((value): value is string => typeof value === "string")
-        : typeof existing === "string"
-          ? [existing]
-          : [];
-      node.properties = {
-        ...node.properties,
-        className: [...classes, className],
-      };
-    });
-  };
-};
-
-/**
- * Example transformer showing remark/rehype usage and resource injection.
- */
-export const ExampleTransformer: QuartzTransformerPlugin<Partial<ExampleTransformerOptions>> = (
-  userOptions?: Partial<ExampleTransformerOptions>,
+export const RoamFlavoredMarkdown: QuartzTransformerPlugin<Partial<RoamOptions> | undefined> = (
+  userOpts,
 ) => {
-  const options = { ...defaultOptions, ...userOptions };
+  const opts = { ...defaultOptions, ...userOpts };
+
   return {
-    name: "ExampleTransformer",
-    textTransform(_ctx: BuildCtx, src: string) {
-      return src.endsWith("\n") ? src : `${src}\n`;
-    },
-    markdownPlugins(): PluggableList {
-      const plugins: PluggableList = [remarkHighlightToken(options.highlightToken)];
-      if (options.enableGfm) {
-        plugins.unshift(remarkGfm);
-      }
+    name: "RoamFlavoredMarkdown",
+    markdownPlugins() {
+      const plugins: PluggableList = [];
+
+      plugins.push(() => {
+        return (tree: Root) => {
+          const replacements: [RegExp, ReplaceFunction][] = [];
+
+          // Handle special embeds (audio, video, PDF)
+          if (opts.audioComponent || opts.videoComponent || opts.pdfComponent) {
+            visit(tree, "paragraph", ((node: Paragraph, index: number, parent: Parent | null) => {
+              if (isSpecialEmbed(node)) {
+                const transformedNode = transformSpecialEmbed(node, opts);
+                if (transformedNode && parent) {
+                  parent.children[index] = transformedNode;
+                }
+              }
+            }) as BuildVisitor<Root, "paragraph">);
+          }
+
+          // Roam italic syntax
+          replacements.push([
+            roamItalicRegex,
+            (_value: string, match: string) => ({
+              type: "emphasis",
+              children: [{ type: "text", value: match }],
+            }),
+          ]);
+
+          // Roam highlight syntax
+          replacements.push([
+            roamHighlightRegex,
+            (_value: string, inner: string) => ({
+              type: "html",
+              value: `<span class="text-highlight">${inner}</span>`,
+            }),
+          ]);
+
+          if (opts.orComponent) {
+            replacements.push([
+              orRegex,
+              (match: string) => {
+                const matchResult = match.match(/{{or:(.*?)}}/);
+                if (matchResult === null || !matchResult[1]) {
+                  return { type: "html", value: "" };
+                }
+                const optionsString: string = matchResult[1];
+                const options: string[] = optionsString.split("|");
+                const selectHtml: string = `<select>${options.map((option: string) => `<option value="${option}">${option}</option>`).join("")}</select>`;
+                return { type: "html", value: selectHtml };
+              },
+            ]);
+          }
+
+          if (opts.TODOComponent) {
+            replacements.push([
+              TODORegex,
+              () => ({
+                type: "html",
+                value: `<input type="checkbox" disabled>`,
+              }),
+            ]);
+          }
+
+          if (opts.DONEComponent) {
+            replacements.push([
+              DONERegex,
+              () => ({
+                type: "html",
+                value: `<input type="checkbox" checked disabled>`,
+              }),
+            ]);
+          }
+
+          if (opts.blockquoteComponent) {
+            replacements.push([
+              blockquoteRegex,
+              (_match: string, _marker: string, content: string) => ({
+                type: "html",
+                value: `<blockquote>${content.trim()}</blockquote>`,
+              }),
+            ]);
+          }
+
+          mdastFindReplace(tree, replacements);
+        };
+      });
+
       return plugins;
-    },
-    htmlPlugins(): PluggableList {
-      const plugins: PluggableList = [rehypeHeadingClass(options.headingClass)];
-      if (options.addHeadingSlugs) {
-        plugins.unshift(rehypeSlug);
-      }
-      return plugins;
-    },
-    externalResources() {
-      return {
-        css: [
-          {
-            content: `.${options.headingClass} { letter-spacing: 0.02em; }`,
-            inline: true,
-          },
-        ],
-        js: [
-          {
-            contentType: "inline",
-            loadTime: "afterDOMReady",
-            script: "document.documentElement.dataset.exampleTransformer = 'true'",
-          },
-        ],
-        additionalHead: [],
-      };
     },
   };
 };
