@@ -72,7 +72,7 @@ function transformSpecialEmbed(node: Paragraph, opts: RoamOptions): Html | null 
         </audio>`,
           }
         : null;
-    case "video":
+    case "video": {
       if (!opts.videoComponent) return null;
       // Check if it's a YouTube video
       const youtubeMatch = url.match(
@@ -80,7 +80,7 @@ function transformSpecialEmbed(node: Paragraph, opts: RoamOptions): Html | null 
       );
       if (youtubeMatch && youtubeMatch[1]) {
         const videoId = youtubeMatch[1].split("&")[0]; // Remove additional parameters
-        const playlistMatch = url.match(/[?&]list=([^#\&\?]*)/);
+        const playlistMatch = url.match(/[?&]list=([^#&?]*)/);
         const playlistId = playlistMatch ? playlistMatch[1] : null;
 
         return {
@@ -104,6 +104,7 @@ function transformSpecialEmbed(node: Paragraph, opts: RoamOptions): Html | null 
           </video>`,
         };
       }
+    }
     case "pdf":
       return opts.pdfComponent
         ? {
