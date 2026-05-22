@@ -88,6 +88,45 @@
     "dependencies": [],
     "defaultOrder": 92,
     "defaultEnabled": false,
-    "defaultOptions": {}
+    "defaultOptions": {
+      "orComponent": true,
+      "TODOComponent": true,
+      "DONEComponent": true,
+      "videoComponent": true,
+      "audioComponent": true,
+      "pdfComponent": true,
+      "blockquoteComponent": true,
+      "tableComponent": true,
+      "attributeComponent": true
+    },
+    "optionSchema": {
+      "orComponent": {
+        "type": "boolean"
+      },
+      "TODOComponent": {
+        "type": "boolean"
+      },
+      "DONEComponent": {
+        "type": "boolean"
+      },
+      "videoComponent": {
+        "type": "boolean"
+      },
+      "audioComponent": {
+        "type": "boolean"
+      },
+      "pdfComponent": {
+        "type": "boolean"
+      },
+      "blockquoteComponent": {
+        "type": "boolean"
+      },
+      "tableComponent": {
+        "type": "boolean"
+      },
+      "attributeComponent": {
+        "type": "boolean"
+      }
+    }
   }
 }
